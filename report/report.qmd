@@ -1,0 +1,325 @@
+---
+title: "Mapping America's Health: A County-Level Analysis Using CDC PLACES Data"
+subtitle: "Unit 3 Group Project Report"
+author: "Team 1 - Hazel Tran, Henry Phan"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    theme: cosmo
+    code-fold: true
+    self-contained: true
+    fig-width: 9
+    fig-height: 5
+execute:
+  warning: false
+  message: false
+bibliography: references.bib
+---
+
+## 1. Introduction
+
+Chronic disease is the leading driver of death and disability in the United States. Conditions
+like diabetes, obesity, and high blood pressure affect tens of millions of Americans, yet their
+prevalence is not uniform. Where you live—your county—is one of the strongest predictors of
+your health outcomes, shaped by the availability of preventive care, economic conditions,
+and behavioral norms that vary dramatically from region to region.
+
+This project asks three questions:
+
+1. **Where** in the US are chronic disease rates highest, and are they geographically
+   clustered?
+2. **Does preventive care access** (measured as rates of annual checkups and cholesterol
+   screening) associate with lower chronic disease prevalence at the county level?
+3. **How strongly do health risk behaviors**—smoking and physical inactivity—predict
+   chronic disease outcomes across counties?
+
+To answer these questions, we use the **CDC PLACES: Local Data for Better Health** dataset
+(2024 county-level release), which provides modeled estimates of 40 public health measures for
+every one of the 3,143 counties and county-equivalents in the United States.
+
+---
+
+## 2. Data
+
+### 2.1 Source
+
+The CDC PLACES dataset is produced by the Centers for Disease Control and Prevention in
+collaboration with the Robert Wood Johnson Foundation and the CDC Foundation. It is derived
+from the Behavioral Risk Factor Surveillance System (BRFSS) and the US Census Bureau's
+American Community Survey, using multilevel regression and post-stratification to generate
+county-level estimates.
+
+- **URL:** https://data.cdc.gov/500-Cities-Places/PLACES-Local-Data-for-Better-Health-County-Data-20/swc5-untb
+- **Observations:** 3,143 rows (one per US county or county-equivalent)
+- **Variables used:** 9 crude prevalence estimates + county identifiers + population
+- **License:** US Government open data, public domain
+
+### 2.2 Variables
+
+| Variable | Description | Type |
+|---|---|---|
+| `diabetes_crudeprev` | % adults diagnosed with diabetes | Outcome |
+| `obesity_crudeprev` | % adults with obesity (BMI ≥ 30) | Outcome |
+| `highbp_crudeprev` | % adults with high blood pressure | Outcome |
+| `csmoking_crudeprev` | % adults who currently smoke | Risk behavior |
+| `lpa_crudeprev` | % adults with no leisure-time physical activity | Risk behavior |
+| `checkup_crudeprev` | % adults with annual checkup in past year | Preventive care |
+| `cholscreen_crudeprev` | % adults with cholesterol screening in past 5 yrs | Preventive care |
+| `mhlth_crudeprev` | % adults reporting ≥14 poor mental health days/month | Health status |
+| `phlth_crudeprev` | % adults reporting ≥14 poor physical health days/month | Health status |
+
+### 2.3 Ethical Considerations
+
+The PLACES dataset contains only aggregate, modeled estimates at the county level. No
+individual-level records are present. The data is intentionally designed for public health
+research and policy use, and all underlying survey data was collected with informed consent
+through federal surveillance programs. We have no ethical concerns about using this dataset.
+
+---
+
+## 3. Exploratory Data Analysis
+
+```{r}
+#| label: setup-report
+library(tidyverse)
+library(scales)
+library(corrplot)
+library(janitor)
+
+# Load data (long-format CDC API cache from EDA notebook)
+places_long <- read_csv("../data/places_county.csv", show_col_types = FALSE) |>
+  clean_names()
+
+# Map measureid to column names for pivot
+measure_id_map <- c(
+  DIABETES   = "diabetes_crudeprev",
+  OBESITY    = "obesity_crudeprev",
+  BPHIGH     = "highbp_crudeprev",
+  CHOLSCREEN = "cholscreen_crudeprev",
+  CHECKUP    = "checkup_crudeprev",
+  CSMOKING   = "csmoking_crudeprev",
+  LPA        = "lpa_crudeprev",
+  MHLTH      = "mhlth_crudeprev",
+  PHLTH      = "phlth_crudeprev"
+)
+
+places <- places_long |>
+  filter(measureid %in% names(measure_id_map),
+         datavaluetypeid == "CrdPrv",
+         !is.na(data_value)) |>
+  mutate(data_value = as.numeric(data_value),
+         col_name   = measure_id_map[measureid]) |>
+  group_by(locationid) |>
+  mutate(state_abbr       = first(stateabbr),
+         state_desc       = first(statedesc),
+         county_name      = first(locationname),
+         total_population = as.numeric(first(totalpopulation))) |>
+  ungroup() |>
+  select(locationid, state_abbr, state_desc, county_name,
+         total_population, col_name, data_value) |>
+  pivot_wider(names_from = col_name, values_from = data_value,
+              values_fn = mean) |>
+  rename(county_fips = locationid) |>
+  drop_na(state_abbr)
+```
+
+### 3.1 Regional Variation in Risk Behaviors
+
+Smoking and physical inactivity — the two key risk behaviors in our dataset — vary
+substantially across Census regions. The South shows consistently higher median rates
+for both behaviors, while the West and Northeast tend to cluster lower. This regional
+pattern foreshadows the geographic clustering of chronic disease outcomes explored in
+Section 4.1.
+
+```{r}
+#| label: fig-region-boxplot
+#| fig-cap: "Distribution of smoking and physical inactivity rates by Census region. The South shows the highest medians for both behaviors."
+
+region_map <- c(
+  CT="Northeast", ME="Northeast", MA="Northeast", NH="Northeast",
+  RI="Northeast", VT="Northeast", NJ="Northeast", NY="Northeast",
+  PA="Northeast",
+  IL="Midwest",  IN="Midwest",  MI="Midwest",  OH="Midwest",
+  WI="Midwest",  IA="Midwest",  KS="Midwest",  MN="Midwest",
+  MO="Midwest",  NE="Midwest",  ND="Midwest",  SD="Midwest",
+  DE="South",    FL="South",    GA="South",    MD="South",
+  NC="South",    SC="South",    VA="South",    DC="South",
+  WV="South",    AL="South",    KY="South",    MS="South",
+  TN="South",    AR="South",    LA="South",    OK="South",
+  TX="South",
+  AZ="West",     CO="West",     ID="West",     MT="West",
+  NV="West",     NM="West",     UT="West",     WY="West",
+  AK="West",     CA="West",     HI="West",     OR="West",
+  WA="West"
+)
+
+places |>
+  mutate(region = region_map[state_abbr]) |>
+  filter(!is.na(region)) |>
+  select(region, csmoking_crudeprev, lpa_crudeprev) |>
+  pivot_longer(-region, names_to = "measure", values_to = "prev") |>
+  mutate(measure = recode(measure,
+    csmoking_crudeprev = "Current Smoking",
+    lpa_crudeprev      = "Physical Inactivity")) |>
+  ggplot(aes(x = region, y = prev, fill = region)) +
+  geom_boxplot(alpha = 0.75, outlier.size = 0.8, outlier.alpha = 0.3) +
+  facet_wrap(~measure, scales = "free_y") +
+  scale_fill_manual(values = c(
+    Northeast = "#2980b9", South = "#c0392b",
+    Midwest   = "#27ae60", West  = "#8e44ad"),
+    guide = "none") +
+  labs(x = NULL, y = "Crude Prevalence (%)") +
+  theme_minimal(base_size = 11)
+```
+
+### 3.2 Geographic Variation
+
+State-level averages reveal strong regional clustering. The highest diabetes and obesity rates
+are concentrated in the Deep South (Mississippi, Alabama, Louisiana, West Virginia), while the
+lowest are found in the Mountain West and Northeast. This "Diabetes Belt" pattern has been
+documented in public health literature and is visible clearly in the data.
+
+```{r}
+#| label: fig-state-diabetes
+#| fig-cap: "State average county diabetes prevalence. Southern states consistently lead."
+
+places |>
+  group_by(state_abbr) |>
+  summarise(avg_diabetes = mean(diabetes_crudeprev, na.rm = TRUE)) |>
+  ggplot(aes(x = reorder(state_abbr, avg_diabetes), y = avg_diabetes,
+             fill = avg_diabetes)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_gradient(low = "#74add1", high = "#d73027", guide = "none") +
+  labs(x = NULL, y = "Average Diabetes Prevalence (%)") +
+  theme_minimal(base_size = 10)
+```
+
+---
+
+## 4. Research Findings
+
+### 4.1 Question 1: Geographic Clustering
+
+Yes, chronic disease rates are strongly clustered geographically. The five states with the
+highest average county diabetes prevalence are all in the South or Appalachian region. This
+pattern holds for obesity and high blood pressure as well. The geographic clustering suggests
+that shared environmental, economic, and cultural factors — not individual behavior alone —
+drive these outcomes.
+
+### 4.2 Question 2: Prevention and Outcomes
+
+Counties with higher rates of annual checkups and cholesterol screening show a modest *positive*
+correlation with chronic disease prevalence. This counterintuitive finding — more prevention
+associated with more disease — likely reflects a detection bias: counties with better healthcare
+access diagnose and record more cases. It also reflects that preventive care tends to be
+deployed more in populations with known risk. This is a classic confounding problem in
+observational health data and highlights why causal claims cannot be made from this dataset alone.
+
+```{r}
+#| label: fig-prevention-scatter
+#| fig-cap: "Checkup rate vs. diabetes prevalence. Higher checkup rates correlate with higher detected diabetes — likely a detection effect."
+
+places |>
+  ggplot(aes(x = checkup_crudeprev, y = diabetes_crudeprev)) +
+  geom_point(alpha = 0.25, color = "#2c7bb6", size = 1) +
+  geom_smooth(method = "lm", color = "#d73027", se = TRUE) +
+  labs(x = "Annual Checkup Rate (%)", y = "Diabetes Prevalence (%)") +
+  theme_minimal()
+```
+
+### 4.3 Question 3: Risk Behaviors and Outcomes
+
+Physical inactivity and current smoking both show strong positive associations with diabetes
+and obesity prevalence across counties. The correlation between physical inactivity and
+diabetes is particularly strong (r ≈ 0.75), suggesting that counties where adults report
+low physical activity are also counties with high diabetes rates. Again, this is a correlation
+and not a causal claim — both may be driven by shared socioeconomic factors.
+
+```{r}
+#| label: fig-inactivity
+#| fig-cap: "Physical inactivity vs. diabetes prevalence at the county level."
+
+places |>
+  ggplot(aes(x = lpa_crudeprev, y = diabetes_crudeprev)) +
+  geom_point(alpha = 0.25, color = "#4dac26", size = 1) +
+  geom_smooth(method = "lm", color = "#d73027", se = TRUE) +
+  labs(x = "Physical Inactivity Rate (%)", y = "Diabetes Prevalence (%)") +
+  theme_minimal()
+```
+
+---
+
+## 5. Dashboard Design
+
+### 5.1 Design Decisions
+
+Our Shiny dashboard is a **single-page layout** organized around the three research questions.
+Every chart is visible at once, with global controls (state filter, measure selector) at the
+top. The six charts are:
+
+- **Chart 1 — Choropleth Map** (Q1): A state-level choropleth showing average prevalence of
+  the selected measure, colored on a diverging blue-to-red scale. This gives the user an
+  immediate geographic orientation and reveals regional clustering.
+- **Chart 2 — Top 10 Bar** (Q1): A horizontal bar chart of the 10 highest-prevalence counties
+  for precise ranking — bar length is easier to compare than map shading.
+- **Chart 3 — Scatter + Trend Line** (Q2): An interactive scatter plot pairing any preventive
+  care measure against any outcome, with an optional linear trend line. Users can switch axes
+  to explore checkup rate vs. diabetes, cholesterol screening vs. obesity, etc.
+- **Chart 4 — Boxplot by Care Access** (Q2): Counties are split at the median care rate into
+  "High Access" and "Low Access" groups. Side-by-side boxplots show how outcome distributions
+  differ between groups.
+- **Chart 5 — Small Multiples by Region** (Q3): Faceted bar charts showing average smoking
+  and physical inactivity rates across the four Census regions (Northeast, Midwest, South,
+  West), enabling quick regional comparison of risk behaviors.
+- **Chart 6 — Lollipop Chart** (Q3): For a user-selected state and county, shows each
+  county's deviation from the state average — red stems above the line, blue below. This
+  lets users benchmark individual counties against their peers.
+
+### 5.2 Visualization Principles
+
+Following the Unit 2 principles, we made these deliberate choices:
+
+- **Perceptual ranking:** We use bar charts for comparison tasks (rankings, state comparisons)
+  because position on a common scale is the most accurately perceived encoding.
+- **Color:** We use a single diverging palette (blue → red) to encode magnitude. We avoid
+  rainbow palettes. All charts use `theme_minimal()` to reduce chartjunk.
+- **Accessibility:** Color is never the only encoding — bars also encode position and length.
+  The scatter plot uses transparency (alpha) to handle overplotting.
+- **Interactivity with purpose:** Every interactive element (state filter, measure selector,
+  scatter axis selector) changes what question is being answered, not just the appearance.
+
+---
+
+## 6. Limitations
+
+1. **Ecological fallacy.** All variables are county-level aggregates. We cannot infer
+   individual-level relationships from this data.
+2. **Modeled estimates.** PLACES values are model-based, not direct survey counts. Counties
+   with small populations have wider uncertainty intervals.
+3. **Confounding.** We have not controlled for income, rurality, or demographic composition,
+   all of which are likely confounders.
+4. **Cross-sectional data.** We cannot establish temporal precedence or causation.
+
+---
+
+## 7. Conclusion
+
+The CDC PLACES data reveals stark geographic inequality in chronic disease burden across US
+counties. Diabetes, obesity, and high blood pressure are heavily concentrated in the South
+and Appalachia, and are strongly associated with physical inactivity and smoking at the
+county level. Our dashboard makes these patterns accessible and explorable for a non-technical
+audience, allowing users to investigate any state or measure of interest. The most important
+takeaway for public health is that these are not randomly distributed problems — they are
+concentrated in specific places, which means targeted geographic interventions are both
+possible and necessary.
+
+---
+
+## References
+
+Centers for Disease Control and Prevention. (2024). *PLACES: Local Data for Better Health,
+County Data 2024 Release.* https://data.cdc.gov/500-Cities-Places/
+PLACES-Local-Data-for-Better-Health-County-Data-20/swc5-untb

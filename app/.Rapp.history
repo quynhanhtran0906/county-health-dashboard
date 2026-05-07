@@ -1,0 +1,37 @@
+install.packages("rmarkdown")
+install.packages(c("httr2", "tidyverse", "rvest"))
+library(rvest)#
+url  <- "https://en.wikipedia.org/wiki/List_of_college_towns"#
+page <- read_html(url)#
+town_tables <- page |> html_elements("table.wikitable") |> html_table()#
+#
+# Check column names of each table#
+map(town_tables, names)
+lapply(town_tables, names)
+lapply(town_tables, function(t) head(t[["Town name"]], 5))
+length(town_tables)#
+lapply(town_tables, function(t) head(t[["Town name"]], 3))
+all_tables <- page |> html_elements("table") |> html_table()#
+length(all_tables)#
+lapply(all_tables, function(t) names(t)[1:min(3, ncol(t))])
+page2 <- read_html("https://en.wikipedia.org/wiki/List_of_college_towns_in_the_United_States")#
+tables2 <- page2 |> html_elements("table") |> html_table()#
+length(tables2)#
+lapply(tables2, function(t) names(t)[1:min(4, ncol(t))])
+install.packages(c("tidyverse", "plotly", "crosstalk", "patchwork"))
+install.packages("colorBlindness")
+ls
+clear
+install.packages(c(#
+  "shiny",#
+  "shinydashboard",#
+  "tidyverse",#
+  "janitor",#
+  "skimr",#
+  "corrplot",#
+  "scales",#
+  "plotly",#
+  "DT"#
+))
+setwd("/Users/huybro/Downloads/files")
+shiny::runApp("app/")

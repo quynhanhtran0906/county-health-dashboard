@@ -1,0 +1,240 @@
+---
+title: "CDC PLACES — Exploratory Data Analysis"
+subtitle: "CP2: Data Loading & EDA"
+author: "Your Team Name"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    theme: cosmo
+    code-fold: true
+    self-contained: true
+execute:
+  warning: false
+  message: false
+---
+
+## 1. Setup & Data Loading
+
+```{r}
+#| label: setup
+
+library(tidyverse)   # data wrangling & ggplot2
+library(janitor)     # clean column names
+library(skimr)       # quick summary stats
+library(corrplot)    # correlation matrix
+library(scales)      # axis formatting
+
+# ---------------------------------------------------------
+# Download the CDC PLACES county-level CSV directly.
+# The Socrata open data API lets us pull CSV with a URL.
+# If this fails, download manually from:
+# https://data.cdc.gov/500-Cities-Places/
+#   PLACES-Local-Data-for-Better-Health-County-Data-20/swc5-untb
+# and place it in the data/ folder as "places_county.csv"
+# ---------------------------------------------------------
+
+data_url <- paste0(
+  "https://data.cdc.gov/resource/swc5-untb.csv",
+  "?$limit=4000"   # all counties (3143 rows), add buffer
+)
+
+places_raw <- read_csv(data_url) |>
+  clean_names()   # snake_case all column names
+
+# Save locally so you don't re-download each time
+write_csv(places_raw, "data/places_county.csv")
+
+cat("Rows:", nrow(places_raw), "\n")
+cat("Columns:", ncol(places_raw), "\n")
+```
+
+## 2. Data Shape & Quality
+
+```{r}
+#| label: skim
+
+# Quick overview of every column
+skim(places_raw)
+```
+
+```{r}
+#| label: missing-values
+
+# Visualise missingness
+places_raw |>
+  summarise(across(everything(), ~ mean(is.na(.)))) |>
+  pivot_longer(everything(), names_to = "variable", values_to = "pct_missing") |>
+  filter(pct_missing > 0) |>
+  arrange(desc(pct_missing)) |>
+  ggplot(aes(x = reorder(variable, pct_missing), y = pct_missing)) +
+  geom_col(fill = "#2c7bb6") +
+  coord_flip() +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title = "Missing Values by Column",
+       x = NULL, y = "% Missing") +
+  theme_minimal()
+```
+
+## 3. Key Variables
+
+We focus on the **crude prevalence** estimates (columns ending in `_crudeprev`) which express
+the estimated percentage of adults in each county with a given condition.
+
+```{r}
+#| label: select-vars
+
+# Select the measures we care about most
+places <- places_raw |>
+  select(
+    state_abbr,
+    state_desc,
+    county_name,
+    county_fips,
+    total_population,
+    # Chronic disease outcomes
+    diabetes_crudeprev,
+    obesity_crudeprev,
+    highbp_crudeprev,
+    # Preventive care
+    cholscreen_crudeprev,
+    colon_screen_crudeprev,
+    checkup_crudeprev,
+    # Risk behaviors
+    csmoking_crudeprev,
+    lpa_crudeprev,          # physical inactivity
+    binge_crudeprev,
+    # Health status
+    mhlth_crudeprev,
+    phlth_crudeprev
+  ) |>
+  # Convert all prevalence columns to numeric
+  mutate(across(ends_with("_crudeprev"), as.numeric),
+         total_population = as.numeric(total_population))
+
+glimpse(places)
+```
+
+## 4. Distributions
+
+### 4a. Chronic Disease Outcomes
+
+```{r}
+#| label: outcome-distributions
+
+places |>
+  select(diabetes_crudeprev, obesity_crudeprev, highbp_crudeprev) |>
+  pivot_longer(everything(), names_to = "measure", values_to = "prevalence") |>
+  mutate(measure = recode(measure,
+    diabetes_crudeprev = "Diabetes",
+    obesity_crudeprev  = "Obesity",
+    highbp_crudeprev   = "High Blood Pressure"
+  )) |>
+  ggplot(aes(x = prevalence, fill = measure)) +
+  geom_histogram(bins = 40, alpha = 0.85, color = "white") +
+  facet_wrap(~measure, scales = "free_x") +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  labs(title = "Distribution of Chronic Disease Prevalence Across US Counties",
+       x = "Crude Prevalence (%)", y = "Number of Counties") +
+  theme_minimal()
+```
+
+### 4b. Risk Behaviors
+
+```{r}
+#| label: behavior-distributions
+
+places |>
+  select(csmoking_crudeprev, lpa_crudeprev, binge_crudeprev) |>
+  pivot_longer(everything(), names_to = "measure", values_to = "prevalence") |>
+  mutate(measure = recode(measure,
+    csmoking_crudeprev = "Current Smoking",
+    lpa_crudeprev      = "Physical Inactivity",
+    binge_crudeprev    = "Binge Drinking"
+  )) |>
+  ggplot(aes(x = prevalence, fill = measure)) +
+  geom_histogram(bins = 40, alpha = 0.85, color = "white") +
+  facet_wrap(~measure, scales = "free_x") +
+  scale_fill_brewer(palette = "Set1", guide = "none") +
+  labs(title = "Distribution of Health Risk Behaviors Across US Counties",
+       x = "Crude Prevalence (%)", y = "Number of Counties") +
+  theme_minimal()
+```
+
+## 5. Top & Bottom Counties
+
+```{r}
+#| label: top-bottom-diabetes
+
+bind_rows(
+  places |> slice_max(diabetes_crudeprev, n = 10) |> mutate(group = "Highest"),
+  places |> slice_min(diabetes_crudeprev, n = 10) |> mutate(group = "Lowest")
+) |>
+  mutate(label = paste0(county_name, ", ", state_abbr)) |>
+  ggplot(aes(x = reorder(label, diabetes_crudeprev),
+             y = diabetes_crudeprev, fill = group)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(values = c("Highest" = "#d73027", "Lowest" = "#4575b4")) +
+  labs(title = "Counties with Highest and Lowest Diabetes Prevalence",
+       x = NULL, y = "Diabetes Prevalence (%)", fill = NULL) +
+  theme_minimal()
+```
+
+## 6. Correlations
+
+```{r}
+#| label: correlations
+
+cor_data <- places |>
+  select(diabetes_crudeprev, obesity_crudeprev, highbp_crudeprev,
+         csmoking_crudeprev, lpa_crudeprev,
+         cholscreen_crudeprev, checkup_crudeprev) |>
+  drop_na()
+
+cor_matrix <- cor(cor_data)
+
+corrplot(cor_matrix,
+         method   = "color",
+         type     = "upper",
+         tl.cex   = 0.8,
+         addCoef.col = "black",
+         number.cex  = 0.7,
+         col = colorRampPalette(c("#4575b4", "white", "#d73027"))(200),
+         title = "Correlation Matrix: Health Outcomes & Behaviors",
+         mar = c(0,0,2,0))
+```
+
+## 7. State-Level Summary
+
+```{r}
+#| label: state-summary
+
+places |>
+  group_by(state_abbr) |>
+  summarise(
+    n_counties        = n(),
+    avg_diabetes      = mean(diabetes_crudeprev, na.rm = TRUE),
+    avg_obesity       = mean(obesity_crudeprev,  na.rm = TRUE),
+    avg_smoking       = mean(csmoking_crudeprev, na.rm = TRUE),
+    avg_inactivity    = mean(lpa_crudeprev,       na.rm = TRUE)
+  ) |>
+  arrange(desc(avg_diabetes)) |>
+  slice_head(n = 15) |>
+  knitr::kable(digits = 1,
+    caption = "Top 15 States by Average County Diabetes Prevalence")
+```
+
+## 8. Research Questions
+
+Based on the EDA above, we will answer the following questions in our final dashboard:
+
+1. **Geographic distribution:** Which US counties and states have the highest rates of
+   diabetes, obesity, and high blood pressure? Are these clustered regionally?
+
+2. **Prevention vs. outcomes:** Do counties with higher rates of preventive care (annual
+   checkups, cholesterol screening) show lower chronic disease prevalence?
+
+3. **Behavior vs. outcomes:** How strongly do smoking and physical inactivity predict
+   diabetes and obesity at the county level?
