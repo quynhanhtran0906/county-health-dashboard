@@ -6,9 +6,9 @@
 This project explores county-level chronic disease patterns across the United States using the
 [CDC PLACES dataset](https://data.cdc.gov/500-Cities-Places/PLACES-Local-Data-for-Better-Health-County-Data-20/swc5-untb).
 
-**Live dashboard:** *(paste your shinyapps.io URL here after deploying)*
+**Live dashboard:** *https://quynhanhtran.shinyapps.io/county-health-dashboard/*
 
----
+--
 
 ## Repository Structure
 
